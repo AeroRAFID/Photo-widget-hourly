@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hourly Photo Frame</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#121212">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #121212; color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    
+    /* Main Photo Display */
+    #viewer { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; background: #000; }
+    #current-photo { max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity 0.5s ease; }
+    #empty-state { text-align: center; color: #888; padding: 20px; }
+    
+    /* Overlay Info */
+    #info-bar { position: absolute; bottom: 20px; left: 20px; right: 20px; display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; }
+    #clock { font-size: 2.5rem; font-weight: 700; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+    #next-timer { font-size: 0.9rem; color: #ccc; text-shadow: 0 1px 5px rgba(0,0,0,0.8); }
+
+    /* Controls Bar */
+    #controls { background: #1e1e1e; padding: 12px 20px; display: flex; gap: 10px; align-items: center; justify-content: space-between; border-top: 1px solid #333; }
+    button, label.btn { background: #333; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 500; }
+    button:hover, label.btn:hover { background: #444; }
+    #install-btn { background: #007aff; display: none; }
+    input[type="file"] { display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="viewer">
+    <div id="empty-state">Tap "Add Photos" below to start your hourly frame.</div>
+    <img id="current-photo" style="display: none;" alt="Hourly Photo">
+    <div id="info-bar">
+      <div>
+        <div id="clock">12:00</div>
+        <div id="next-timer">Next photo in: --:--</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <label class="btn">
+      + Add Photos
+      <input type="file" id="photo-input" accept="image/*" multiple>
+    </label>
+    <div>
+      <button id="next-btn">Next Now</button>
+      <button id="clear-btn">Clear</button>
+      <button id="install-btn">Install App</button>
+    </div>
+  </div>
+
+  <script>
+    // Register Service Worker for PWA installability
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(console.error);
+    }
+
+    // Handle Install Prompt
+    let deferredPrompt;
+    const installBtn = document.getElementById('install-btn');
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.style.display = 'inline-block';
+    });
+
+    installBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') installBtn.style.display = 'none';
+      deferredPrompt = null;
+    });
+
+    // Photo Storage & Hourly Logic
+    let photos = JSON.parse(localStorage.getItem('hourly_photos') || '[]');
+    let currentIndex = parseInt(localStorage.getItem('current_index') || '0', 10);
+    let lastHour = new Date().getHours();
+
+    const imgEl = document.getElementById('current-photo');
+    const emptyEl = document.getElementById('empty-state');
+    const clockEl = document.getElementById('clock');
+    const timerEl = document.getElementById('next-timer');
+
+    function renderPhoto() {
+      if (photos.length === 0) {
+        imgEl.style.display = 'none';
+        emptyEl.style.display = 'block';
+        return;
+      }
+      emptyEl.style.display = 'none';
+      imgEl.style.display = 'block';
+      currentIndex = currentIndex % photos.length;
+      imgEl.src = photos[currentIndex];
+      localStorage.setItem('current_index', currentIndex);
+    }
+
+    function nextPhoto() {
+      if (photos.length === 0) return;
+      currentIndex = (currentIndex + 1) % photos.length;
+      renderPhoto();
+    }
+
+    // Upload Photos (compressed to fit localStorage)
+    document.getElementById('photo-input').addEventListener('change', (e) => {
+      Array.from(e.target.files).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          photos.push(event.target.result);
+          try {
+            localStorage.setItem('hourly_photos', JSON.stringify(photos));
+            renderPhoto();
+          } catch (err) {
+            alert('Storage full! Try adding fewer or smaller photos.');
+            photos.pop();
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    document.getElementById('next-btn').addEventListener('click', nextPhoto);
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      if (confirm('Remove all photos?')) {
+        photos = [];
+        localStorage.removeItem('hourly_photos');
+        renderPhoto();
+      }
+    });
+
+    // Clock & Hourly Check Loop
+    function updateClock() {
+      const now = new Date();
+      clockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      const minsLeft = 59 - now.getMinutes();
+      const secsLeft = 59 - now.getSeconds();
+      timerEl.textContent = `Next photo in: ${String(minsLeft).padStart(2, '0')}:${String(secsLeft).padStart(2, '0')}`;
+
+      if (now.getHours() !== lastHour) {
+        lastHour = now.getHours();
+        nextPhoto();
+      }
+    }
+
+    renderPhoto();
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+</body>
+</html>
